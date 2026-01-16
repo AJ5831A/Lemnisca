@@ -5,16 +5,18 @@ import pandas as pd
 import numpy as np
 import io
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from scipy.stats import skew, kurtosis
 import warnings
 
 warnings.filterwarnings('ignore')
 
-app = FastAPI(title="BioOptima: Penicillin Process Analytics", version="3.0.0")
+app = FastAPI(title="BioOptima: Penicillin Process Analytics", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,16 +30,19 @@ app.add_middleware(
 data_store = {
     "raw_data": None,
     "preprocessed_data": None,
-    "trained_model": None,
+    "models": {
+        "linear": None,
+        "forest": None
+    },
     "scaler": None,
-    "feature_scaler": None, # For radar charts
+    "feature_scaler": None, 
     "model_metadata": None,
     "feature_names": None,
     "target_name": None,
-    "column_mapping": {} # Maps simplified names to CSV columns
+    "column_mapping": {}
 }
 
-# Key Process Parameters (Your "Hyperparameters")
+# Key Process Parameters
 KEY_PARAMETERS = {
     "sugar_feed": ["sugar", "feed", "fs", "glucose"],
     "paa": ["paa", "phenylacetic", "fpaa"],
@@ -48,32 +53,6 @@ KEY_PARAMETERS = {
 # ============================================
 # HELPER FUNCTIONS
 # ============================================
-def find_column(df_cols, keywords):
-    """Fuzzy search for column names"""
-    for col in df_cols:
-        col_lower = col.lower()
-        for key in keywords:
-            if key in col_lower:
-                return col
-    return None
-
-def identify_biotech_columns(df):
-    """Map the messy CSV columns to clean internal names"""
-    mapping = {}
-    
-    # Map Key Parameters
-    for key, keywords in KEY_PARAMETERS.items():
-        found_col = find_column(df.columns, keywords)
-        if found_col:
-            mapping[key] = found_col
-            
-    # Map Context Parameters
-    mapping["time"] = find_column(df.columns, ["time", "hour", "duration"])
-    mapping["batch_id"] = find_column(df.columns, ["batch", "id", "run"])
-    mapping["target"] = find_column(df.columns, ["penicillin", "product", "concentration", "yield", "output"])
-    
-    return mapping
-
 def clean_nans(data):
     """Recursively replace NaN and Infinity with None for JSON compliance"""
     if isinstance(data, dict):
@@ -84,36 +63,51 @@ def clean_nans(data):
         if np.isnan(data) or np.isinf(data):
             return None
         return data
-    elif isinstance(data, np.integer): # Handle numpy integers
+    elif isinstance(data, np.integer):
         return int(data)
-    elif isinstance(data, np.floating): # Handle numpy floats
+    elif isinstance(data, np.floating):
         if np.isnan(data) or np.isinf(data):
             return None
         return float(data)
     return data
 
+def find_column(df_cols, keywords):
+    for col in df_cols:
+        col_lower = col.lower()
+        for key in keywords:
+            if key in col_lower:
+                return col
+    return None
+
+def identify_biotech_columns(df):
+    mapping = {}
+    for key, keywords in KEY_PARAMETERS.items():
+        found_col = find_column(df.columns, keywords)
+        if found_col:
+            mapping[key] = found_col
+    mapping["time"] = find_column(df.columns, ["time", "hour", "duration"])
+    mapping["batch_id"] = find_column(df.columns, ["batch", "id", "run"])
+    mapping["target"] = find_column(df.columns, ["penicillin", "product", "concentration", "yield", "output"])
+    return mapping
+
 # ============================================
-# API 1: UPLOAD DATA (FIXED)
+# API 1: UPLOAD DATA (ENHANCED)
 # ============================================
 @app.post("/api/upload")
 async def upload_data(file: UploadFile = File(...)):
     """
-    Uploads fermentation data and performs Batch-Level Analysis.
+    Uploads data and provides deep batch comparisons (Golden vs Bad Batch).
     """
     try:
         contents = await file.read()
-        # Try reading with header=1 first as biotech CSVs often have units in row 2
         try:
             df = pd.read_csv(io.BytesIO(contents), header=1)
-            # Basic validation: check if 'Batch' or 'Time' exists, if not retry with header=0
             if not any("batch" in col.lower() for col in df.columns):
                  df = pd.read_csv(io.BytesIO(contents), header=0)
         except:
              df = pd.read_csv(io.BytesIO(contents), header=0)
 
         data_store["raw_data"] = df
-        
-        # Identify Columns
         mapping = identify_biotech_columns(df)
         data_store["column_mapping"] = mapping
         
@@ -126,94 +120,81 @@ async def upload_data(file: UploadFile = File(...)):
         visualization_data = {}
         
         if batch_col and target_col:
-            # Group by Batch to find final yield per batch
             batch_groups = df.groupby(batch_col)
             batch_yields = batch_groups[target_col].max()
             
-            # Identify "Golden Batch" (Best Yield)
+            # Identify Extremes
             best_batch_id = batch_yields.idxmax()
-            best_batch_yield = batch_yields.max()
-            avg_yield = batch_yields.mean()
-            std_yield = batch_yields.std()
-            
-            # Safe CV calculation
-            cv = 0
-            if avg_yield > 0 and not np.isnan(std_yield):
-                cv = (std_yield / avg_yield * 100)
+            worst_batch_id = batch_yields.idxmin()
             
             batch_insights = {
                 "total_batches": int(df[batch_col].nunique()),
-                "average_yield": round(float(avg_yield), 2),
-                "max_yield": round(float(best_batch_yield), 2),
+                "average_yield": round(float(batch_yields.mean()), 2),
+                "max_yield": round(float(batch_yields.max()), 2),
+                "min_yield": round(float(batch_yields.min()), 2),
                 "golden_batch_id": int(best_batch_id),
-                "yield_variability_cv": round(float(cv), 2)
+                "lowest_yield_batch_id": int(worst_batch_id),
+                "yield_std_dev": round(float(batch_yields.std()), 2)
             }
             
-            # Histogram Data for Yield Distribution
-            # Dropna ensures np.histogram doesn't get NaNs
+            # --- Graph Data: Raw Traces (Spaghetti Plot) ---
+            # Extract time-series for first 5 batches to show variability
+            raw_traces = []
+            if time_col:
+                for bid in df[batch_col].unique()[:5]: # Limit to 5 batches
+                    batch_data = df[df[batch_col] == bid]
+                    # Downsample for performance (every 10th point)
+                    batch_data = batch_data.iloc[::10, :]
+                    raw_traces.append({
+                        "batch_id": int(bid),
+                        "time": batch_data[time_col].tolist(),
+                        "yield": batch_data[target_col].tolist()
+                    })
+            visualization_data["raw_traces"] = raw_traces
+
+            # --- Graph Data: Yield Distribution ---
             clean_yields = batch_yields.dropna()
             if not clean_yields.empty:
-                hist_counts, hist_bins = np.histogram(clean_yields, bins=10)
+                hist_counts, hist_bins = np.histogram(clean_yields, bins=15)
                 visualization_data["yield_distribution"] = {
-                    "type": "bar",
-                    "title": "Batch Yield Distribution",
-                    "x_label": "Penicillin Concentration (g/L)",
-                    "y_label": "Number of Batches",
                     "x_values": [round(b, 2) for b in hist_bins[:-1]],
                     "y_values": hist_counts.tolist()
                 }
 
-        # --- Insight 2: Input Parameter Correlation ---
-        correlations = []
-        if target_col:
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            # Fill NaNs before correlation to avoid errors
-            corr_matrix = df[numeric_cols].fillna(0).corr()
-            
-            if target_col in corr_matrix:
-                target_corrs = corr_matrix[target_col].sort_values(ascending=False)
-                
-                # Filter for our key parameters
-                for clean_name, original_name in mapping.items():
-                    if clean_name in KEY_PARAMETERS and original_name in target_corrs:
-                        val = target_corrs[original_name]
-                        # Check for NaN correlations (happens if column is constant)
-                        if not np.isnan(val):
-                            correlations.append({
-                                "parameter": clean_name.replace("_", " ").title(),
-                                "correlation": round(float(val), 3),
-                                "relationship": "Positive" if val > 0 else "Negative"
-                            })
+        # --- Insight 2: Feature Ranges (Data Quality) ---
+        feature_ranges = []
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        for clean_name, original_name in mapping.items():
+            if clean_name in KEY_PARAMETERS and original_name in numeric_cols:
+                feature_ranges.append({
+                    "parameter": clean_name.replace("_", " ").title(),
+                    "min": float(df[original_name].min()),
+                    "max": float(df[original_name].max()),
+                    "mean": float(df[original_name].mean())
+                })
 
-        response_data = {
+        response = {
             "success": True,
             "filename": file.filename,
             "biotech_insights": {
                 "batch_summary": batch_insights,
-                "key_parameter_correlations": correlations,
-                "data_health": {
-                    "missing_values": int(df.isnull().sum().sum()),
-                    "columns_mapped": [k for k, v in mapping.items() if v is not None]
-                }
+                "parameter_ranges": feature_ranges,
             },
             "dashboard_graphs": visualization_data
         }
-        
-        # Sanitize entire response before returning
-        return clean_nans(response_data)
+        return clean_nans(response)
     
     except Exception as e:
-        import traceback
-        traceback.print_exc() # Print full error to console for debugging
         raise HTTPException(status_code=400, detail=f"Error analyzing file: {str(e)}")
 
+
 # ============================================
-# API 2: PREPROCESS & TRAJECTORY ANALYSIS
+# API 2: PREPROCESS (ENHANCED STATS)
 # ============================================
 @app.post("/api/preprocess")
 async def preprocess_data():
     """
-    Prepares data and calculates 'Golden Batch' trajectories.
+    Cleans data and calculates advanced statistical moments (Skew/Kurtosis).
     """
     try:
         if data_store["raw_data"] is None:
@@ -222,78 +203,80 @@ async def preprocess_data():
         df = data_store["raw_data"].copy()
         mapping = data_store["column_mapping"]
         
-        # 1. Clean Data (Impute & Drop)
+        # 1. Imputation
+        missing_count = int(df.isnull().sum().sum())
         df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
         
-        # 2. Generate "Standard Trajectory" (Avg Process Profile)
-        # We group by rounded time to average across batches
+        # 2. Advanced Stats (Skewness & Kurtosis)
+        # These indicate if sensors are noisy or if process drifts
+        stats_data = []
+        for clean_name, original_name in mapping.items():
+            if clean_name in KEY_PARAMETERS:
+                series = df[original_name]
+                stats_data.append({
+                    "parameter": clean_name.replace("_", " ").title(),
+                    "skewness": float(skew(series)),
+                    "kurtosis": float(kurtosis(series)),
+                    "status": "Stable" if abs(skew(series)) < 1 else "Drifting/Skewed"
+                })
+
+        # 3. Trajectories (Golden Batch)
         time_col = mapping.get("time")
         target_col = mapping.get("target")
-        trajectories = {}
+        trajectory_data = []
         
-        if time_col:
-            # Round time to nearest 0.5h for grouping
+        if time_col and target_col:
             df['approx_time'] = (df[time_col] * 2).round() / 2
             grouped = df.groupby('approx_time')
-            
-            # Calculate Mean and Std for Target and Key Parameters
             cols_to_track = [target_col] + [v for k, v in mapping.items() if k in KEY_PARAMETERS]
             
-            trajectory_data = []
             for t, group in grouped:
-                if t > 50: continue # Limit to first 50h for frontend performance or sample
+                if t > 60: continue # Cap at 60h
                 point = {"time": float(t)}
                 for col in cols_to_track:
                     if col:
                         point[f"{col}_mean"] = float(group[col].mean())
                         point[f"{col}_std"] = float(group[col].std())
                 trajectory_data.append(point)
-            
-            trajectories["process_profiles"] = trajectory_data
 
         data_store["preprocessed_data"] = df
         
-        return {
+        return clean_nans({
             "success": True,
-            "message": "Data cleaned and profiles generated",
-            "preprocessing_insights": {
-                "samples_processed": len(df),
-                "features_tracked": list(KEY_PARAMETERS.keys())
+            "stats_deep_dive": {
+                "imputation_count": missing_count,
+                "sensor_health": stats_data
             },
             "visualization_data": {
-                "golden_batch_trajectory": {
-                    "type": "line_with_confidence",
-                    "title": "Average Fermentation Profile (Mean ± Std Dev)",
-                    "data": trajectory_data  # Frontend: Plot Mean as line, Mean+/-Std as shaded area
-                }
+                "golden_batch_trajectory": trajectory_data
             }
-        }
+        })
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
-# API 3: TRAIN MODEL
+# API 3: TRAIN (LINEAR VS FOREST)
 # ============================================
 class TrainingConfig(BaseModel):
     test_size: float = 0.2
+    n_estimators: int = 100 # For Random Forest
 
 @app.post("/api/train")
-async def train_model(config: TrainingConfig):
+async def train_models(config: TrainingConfig):
     """
-    Trains Linear Regression specifically on the identified Critical Process Parameters.
+    Trains BOTH Linear Regression and Random Forest for comparison.
     """
     try:
         df = data_store["preprocessed_data"]
         mapping = data_store["column_mapping"]
         
-        # Select Features: Only use the Key Parameters identified
         feature_cols = [mapping[k] for k in KEY_PARAMETERS if k in mapping]
         target_col = mapping.get("target")
         
         if not feature_cols or not target_col:
-            raise HTTPException(status_code=400, detail="Key biotech columns not found in data")
+            raise HTTPException(status_code=400, detail="Key columns missing")
 
         X = df[feature_cols]
         y = df[target_col]
@@ -302,143 +285,131 @@ async def train_model(config: TrainingConfig):
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
         
-        # Train
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=config.test_size)
-        model = LinearRegression()
-        model.fit(X_train, y_train)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y, test_size=config.test_size, random_state=42
+        )
         
-        # Metrics
-        y_pred = model.predict(X_test)
-        r2 = r2_score(y_test, y_pred)
+        # --- MODEL 1: LINEAR REGRESSION ---
+        lr_model = LinearRegression()
+        lr_model.fit(X_train, y_train)
+        lr_pred = lr_model.predict(X_test)
         
-        # Save artifacts
-        data_store["trained_model"] = model
+        lr_metrics = {
+            "r2": r2_score(y_test, lr_pred),
+            "mae": mean_absolute_error(y_test, lr_pred),
+            "rmse": np.sqrt(mean_squared_error(y_test, lr_pred))
+        }
+
+        # --- MODEL 2: RANDOM FOREST ---
+        rf_model = RandomForestRegressor(n_estimators=config.n_estimators, random_state=42)
+        rf_model.fit(X_train, y_train)
+        rf_pred = rf_model.predict(X_test)
+        
+        rf_metrics = {
+            "r2": r2_score(y_test, rf_pred),
+            "mae": mean_absolute_error(y_test, rf_pred),
+            "rmse": np.sqrt(mean_squared_error(y_test, rf_pred))
+        }
+
+        # Store Artifacts
+        data_store["models"]["linear"] = lr_model
+        data_store["models"]["forest"] = rf_model
         data_store["scaler"] = scaler
         data_store["feature_names"] = feature_cols
         data_store["target_name"] = target_col
         
-        # Save a MinMax scaler for Radar Charts later
         feature_scaler = MinMaxScaler()
         feature_scaler.fit(df[feature_cols])
         data_store["feature_scaler"] = feature_scaler
 
-        # Feature Importance (Coefficient Analysis)
-        importance = []
-        for name, col_name in mapping.items():
-            if col_name in feature_cols:
-                idx = feature_cols.index(col_name)
-                coef = model.coef_[idx]
-                importance.append({
-                    "parameter": name.replace("_", " ").title(),
-                    "impact_score": float(coef),
-                    "interpretation": "Increases Yield" if coef > 0 else "Decreases Yield"
-                })
+        # Feature Importance Comparison
+        # Linear uses coefficients, RF uses feature_importances_
+        feature_impact = []
+        for i, col_name in enumerate(feature_cols):
+            clean_name = next(k for k, v in mapping.items() if v == col_name)
+            feature_impact.append({
+                "parameter": clean_name.replace("_", " ").title(),
+                "linear_coef": float(lr_model.coef_[i]),
+                "forest_importance": float(rf_model.feature_importances_[i])
+            })
 
-        return {
+        return clean_nans({
             "success": True,
-            "model_performance": {
-                "r2_score": round(r2, 4),
-                "model_type": "Linear Regression (Process Parameters Only)"
+            "comparison": {
+                "linear": lr_metrics,
+                "forest": rf_metrics,
+                "winner": "Random Forest" if rf_metrics['r2'] > lr_metrics['r2'] else "Linear Regression"
             },
-            "biotech_insights": {
-                "key_drivers": sorted(importance, key=lambda x: abs(x['impact_score']), reverse=True),
-                "model_equation": "Yield = " + " + ".join([f"({i['impact_score']:.2f} * {i['parameter']})" for i in importance])
-            },
+            "feature_analysis": feature_impact,
             "visualization_data": {
                 "actual_vs_predicted": {
-                    "actual": y_test.tolist()[:50],
-                    "predicted": y_pred.tolist()[:50]
+                    "actual": y_test.tolist()[:100], # Limit points
+                    "linear_pred": lr_pred.tolist()[:100],
+                    "forest_pred": rf_pred.tolist()[:100]
                 }
             }
-        }
+        })
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
-# API 4: PREDICT & OPTIMIZE
+# API 4: PREDICT (MULTI-MODEL)
 # ============================================
 class ProcessParams(BaseModel):
     sugar_feed: float
     paa: float
     agitator_rpm: float
     aeration_rate: float
+    model_type: Literal["linear", "forest"] = "forest" # User choice
 
 @app.post("/api/predict")
 async def predict_process(params: ProcessParams):
     """
-    Predicts yield and visualizes where the input parameters sit in the 'Design Space'.
+    Predicts using the selected model type.
     """
     try:
-        if not data_store["trained_model"]:
-            raise HTTPException(status_code=400, detail="Model not trained")
+        model = data_store["models"].get(params.model_type)
+        if not model:
+            raise HTTPException(status_code=400, detail=f"Model {params.model_type} not trained")
             
         mapping = data_store["column_mapping"]
         feature_names = data_store["feature_names"]
         
         # 1. Prepare Input
-        # Map user input to the correct column order used in training
         input_values = []
         for col in feature_names:
-            # Find which key matches this column
             key_match = next(k for k, v in mapping.items() if v == col)
             val = getattr(params, key_match)
             input_values.append(val)
             
         input_array = np.array([input_values])
+        input_scaled = data_store["scaler"].transform(input_array)
         
         # 2. Predict
-        input_scaled = data_store["scaler"].transform(input_array)
-        prediction = data_store["trained_model"].predict(input_scaled)[0]
+        prediction = model.predict(input_scaled)[0]
         
-        # 3. Contextual Analysis (Radar Chart Data)
-        # Normalize inputs to 0-100% relative to historical data range
-        # This shows if a parameter is High, Low, or Medium compared to past batches
+        # 3. Contextual Analysis (Radar)
         norm_inputs = data_store["feature_scaler"].transform(input_array)[0]
-        
         radar_data = []
         for i, col in enumerate(feature_names):
             key_match = next(k for k, v in mapping.items() if v == col)
             radar_data.append({
                 "parameter": key_match.replace("_", " ").title(),
                 "value": float(input_values[i]),
-                "percentile_score": float(norm_inputs[i] * 100), # 0 = min historical, 100 = max historical
-                "status": "High" if norm_inputs[i] > 0.8 else "Low" if norm_inputs[i] < 0.2 else "Normal"
+                "percentile": float(norm_inputs[i] * 100)
             })
             
-        # 4. Benchmarking
-        # Compare prediction to historical max yield
-        raw_df = data_store["raw_data"]
-        target_col = data_store["target_name"]
-        max_yield = raw_df[target_col].max()
-        avg_yield = raw_df[target_col].mean()
-        
-        return {
+        return clean_nans({
             "prediction": {
-                "predicted_penicillin_conc": round(float(prediction), 4),
-                "unit": "g/L",
-                "performance_assessment": "Excellent" if prediction > avg_yield * 1.1 else "Average" if prediction > avg_yield * 0.9 else "Poor"
-            },
-            "optimization_insights": {
-                "comparison_to_max": f"{round(prediction/max_yield*100, 1)}% of Best Historical Batch",
-                "parameter_health_check": [
-                    f"{r['parameter']} is {r['status']} ({r['percentile_score']:.0f}% of range)" 
-                    for r in radar_data if r['status'] != "Normal"
-                ]
+                "value": round(float(prediction), 4),
+                "model_used": params.model_type.title()
             },
             "visualization_data": {
-                "radar_chart": {
-                    "title": "Parameter Design Space",
-                    "indicators": radar_data  # Frontend: Plot these on a spider/radar chart
-                },
-                "yield_gauge": {
-                    "value": round(float(prediction), 2),
-                    "min": float(raw_df[target_col].min()),
-                    "mean": float(avg_yield),
-                    "max": float(max_yield)
-                }
+                "radar_indicators": radar_data
             }
-        }
+        })
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

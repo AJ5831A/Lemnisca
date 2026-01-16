@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioOptima | Advanced Process Analytics</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .sidebar-link.active { background-color: #0f766e; color: white; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen flex overflow-hidden">
+
+    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col shadow-lg z-10">
+        <div class="p-6 flex items-center gap-3 border-b border-slate-100">
+            <div class="w-8 h-8 bg-teal-600 rounded-lg flex items-center justify-center text-white font-bold">B</div>
+            <h1 class="text-xl font-bold text-slate-800 tracking-tight">BioOptima</h1>
+        </div>
+
+        <nav class="flex-1 p-4 space-y-2">
+            <button onclick="showSection('upload')" id="nav-upload" class="sidebar-link active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-slate-50 transition-colors text-slate-600 font-medium">
+                <i class="fa-solid fa-upload w-5"></i> Data Upload
+            </button>
+            <button onclick="showSection('preprocess')" id="nav-preprocess" class="sidebar-link w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-slate-50 transition-colors text-slate-600 font-medium">
+                <i class="fa-solid fa-filter w-5"></i> Preprocessing
+            </button>
+            <button onclick="showSection('train')" id="nav-train" class="sidebar-link w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-slate-50 transition-colors text-slate-600 font-medium">
+                <i class="fa-solid fa-brain w-5"></i> Model Training
+            </button>
+            <button onclick="showSection('predict')" id="nav-predict" class="sidebar-link w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-slate-50 transition-colors text-slate-600 font-medium">
+                <i class="fa-solid fa-flask w-5"></i> Simulation
+            </button>
+        </nav>
+    </aside>
+
+    <main class="flex-1 overflow-y-auto p-8 relative">
+        
+        <section id="section-upload" class="fade-in space-y-6 max-w-6xl mx-auto">
+            <div class="flex justify-between items-end">
+                <div>
+                    <h2 class="text-3xl font-bold text-slate-900">Upload Batch Data</h2>
+                    <p class="text-slate-500 mt-2">Upload penicillin fermentation CSV for Golden Batch Analysis.</p>
+                </div>
+            </div>
+
+            <div class="bg-white border-2 border-dashed border-slate-300 rounded-xl p-10 text-center hover:border-teal-500 transition-colors cursor-pointer group" onclick="document.getElementById('fileInput').click()">
+                <input type="file" id="fileInput" class="hidden" accept=".csv" onchange="handleFileUpload(this)">
+                <div class="w-16 h-16 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                    <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-slate-700">Click to upload CSV</h3>
+            </div>
+
+            <div id="upload-insights" class="hidden grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <div class="text-slate-400 text-xs font-bold uppercase tracking-wide">Total Batches</div>
+                    <div class="text-2xl font-bold text-slate-800 mt-1" id="stat-batches">-</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <div class="text-slate-400 text-xs font-bold uppercase tracking-wide">Avg Yield (g/L)</div>
+                    <div class="text-2xl font-bold text-slate-800 mt-1" id="stat-avg-yield">-</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 border-l-4 border-l-teal-500">
+                    <div class="text-teal-600 text-xs font-bold uppercase tracking-wide">Golden Batch</div>
+                    <div class="text-2xl font-bold text-slate-800 mt-1" id="stat-golden">-</div>
+                    <div class="text-xs text-slate-400">Best performing ID</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 border-l-4 border-l-rose-500">
+                    <div class="text-rose-500 text-xs font-bold uppercase tracking-wide">Weakest Batch</div>
+                    <div class="text-2xl font-bold text-slate-800 mt-1" id="stat-worst">-</div>
+                    <div class="text-xs text-slate-400">Review parameters</div>
+                </div>
+            </div>
+
+            <div id="upload-charts" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96 flex flex-col">
+                    <div class="mb-4">
+                        <h4 class="text-base font-bold text-slate-700">Process Variability (Spaghetti Plot)</h4>
+                        <p class="text-xs text-slate-400">Visual comparison of time-series traces across batches. Inspects consistency.</p>
+                    </div>
+                    <div class="flex-1 min-h-0">
+                        <canvas id="spaghettiChart"></canvas>
+                    </div>
+                </div>
+            
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96 flex flex-col">
+                    <div class="mb-4">
+                        <h4 class="text-base font-bold text-slate-700">Batch Yield Distribution</h4>
+                        <p class="text-xs text-slate-400">Histogram of final output concentrations. Checks process capability.</p>
+                    </div>
+                    <div class="flex-1 min-h-0">
+                        <canvas id="yieldChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="section-preprocess" class="hidden fade-in space-y-6 max-w-6xl mx-auto">
+            <div>
+                <h2 class="text-3xl font-bold text-slate-900">Data Preprocessing</h2>
+                <p class="text-slate-500 mt-2">Analyze statistical moments and clean sensor data.</p>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex items-center justify-between">
+                <div>
+                    <h3 class="font-semibold text-lg">Execute Pipeline</h3>
+                    <p class="text-slate-500 text-sm">Impute missing data, check skewness/kurtosis, and generate profiles.</p>
+                </div>
+                <button onclick="runPreprocessing()" class="bg-teal-600 hover:bg-teal-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors shadow-sm flex items-center gap-2">
+                    <i class="fa-solid fa-gears"></i> Run
+                </button>
+            </div>
+
+            <div id="preprocess-results" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96">
+                    <h4 class="text-sm font-bold text-slate-400 uppercase mb-4">Standard Process Profile (Mean ± Std)</h4>
+                    <canvas id="trajectoryChart"></canvas>
+                </div>
+                
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96 overflow-y-auto">
+                    <h4 class="text-sm font-bold text-slate-400 uppercase mb-4">Sensor Health (Skewness)</h4>
+                    <div id="stats-container" class="space-y-3">
+                        </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="section-train" class="hidden fade-in space-y-6 max-w-6xl mx-auto">
+            <div>
+                <h2 class="text-3xl font-bold text-slate-900">Model Training</h2>
+                <p class="text-slate-500 mt-2">Train and compare Linear Regression vs Random Forest.</p>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <div class="flex items-center gap-4">
+                    <button onclick="trainModel()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-2.5 rounded-lg font-medium transition-colors shadow-sm">
+                        Train Both Models
+                    </button>
+                    <span class="text-slate-400 text-sm">Comparing algorithms on 20% test split...</span>
+                </div>
+            </div>
+
+            <div id="train-results" class="hidden space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-l-4 border-l-blue-500">
+                        <div class="flex justify-between items-start mb-4">
+                            <h3 class="font-bold text-slate-700">Linear Regression</h3>
+                            <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded font-bold">Baseline</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="text-slate-400 text-xs uppercase">R² Score</div>
+                                <div class="text-2xl font-bold text-slate-800" id="lr-r2">-</div>
+                            </div>
+                            <div>
+                                <div class="text-slate-400 text-xs uppercase">RMSE</div>
+                                <div class="text-2xl font-bold text-slate-800" id="lr-rmse">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-l-4 border-l-emerald-500">
+                        <div class="flex justify-between items-start mb-4">
+                            <h3 class="font-bold text-slate-700">Random Forest</h3>
+                            <span class="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded font-bold" id="rf-badge">Non-Linear</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="text-slate-400 text-xs uppercase">R² Score</div>
+                                <div class="text-2xl font-bold text-slate-800" id="rf-r2">-</div>
+                            </div>
+                            <div>
+                                <div class="text-slate-400 text-xs uppercase">RMSE</div>
+                                <div class="text-2xl font-bold text-slate-800" id="rf-rmse">-</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96">
+                        <h4 class="text-sm font-bold text-slate-500 mb-4">Actual vs Predicted (Model Accuracy)</h4>
+                        <canvas id="predVsActualChart"></canvas>
+                        <p class="text-center text-xs text-slate-400 mt-2">Points closer to the diagonal line indicate better accuracy.</p>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-96 overflow-y-auto">
+                        <h4 class="text-sm font-bold text-slate-500 mb-4">Feature Importance (RF vs Linear)</h4>
+                        <div id="feature-list" class="space-y-4">
+                            </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="section-predict" class="hidden fade-in space-y-6 max-w-6xl mx-auto">
+            <div>
+                <h2 class="text-3xl font-bold text-slate-900">Process Simulation</h2>
+                <p class="text-slate-500 mt-2">Simulate outcomes using your trained models.</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 lg:col-span-1 space-y-4 h-fit">
+                    <h3 class="font-semibold text-slate-800 mb-2">Simulation Settings</h3>
+                    
+                    <div class="bg-indigo-50 p-3 rounded-lg border border-indigo-100 mb-4">
+                        <label class="block text-xs font-bold text-indigo-700 uppercase mb-1">Prediction Model</label>
+                        <select id="model-select" class="w-full bg-white border border-indigo-200 rounded text-sm px-2 py-1 focus:outline-none">
+                            <option value="forest">Random Forest (Recommended)</option>
+                            <option value="linear">Linear Regression</option>
+                        </select>
+                    </div>
+
+                    <div><label class="block text-xs font-bold text-slate-500 uppercase mb-1">Sugar Feed Rate</label><input type="number" id="p-sugar" value="12.5" class="input-field"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 uppercase mb-1">PAA Flow</label><input type="number" id="p-paa" value="6.0" class="input-field"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 uppercase mb-1">Agitator RPM</label><input type="number" id="p-rpm" value="100" class="input-field"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 uppercase mb-1">Aeration Rate</label><input type="number" id="p-aeration" value="30" class="input-field"></div>
+
+                    <button onclick="runPrediction()" class="w-full bg-teal-600 hover:bg-teal-700 text-white py-3 rounded-lg font-bold shadow-md transition-all mt-4">
+                        Simulate
+                    </button>
+                </div>
+
+                <div class="lg:col-span-2 space-y-6">
+                    <div id="prediction-card" class="hidden bg-gradient-to-r from-teal-600 to-emerald-600 p-8 rounded-xl shadow-lg text-white flex items-center justify-between">
+                        <div>
+                            <div class="text-teal-100 font-medium text-sm uppercase">Projected Yield</div>
+                            <div class="text-5xl font-bold mt-2"><span id="pred-val">0.00</span> <span class="text-2xl font-normal opacity-80">g/L</span></div>
+                            <div class="text-sm mt-2 text-teal-100">Model Used: <span id="model-used-display" class="font-bold"></span></div>
+                        </div>
+                    </div>
+
+                    <div id="radar-container" class="hidden bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-80 flex flex-col items-center justify-center">
+                        <h4 class="text-sm font-bold text-slate-400 uppercase w-full text-left mb-2">Design Space Position</h4>
+                        <div class="h-64 w-full"><canvas id="radarChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white px-6 py-3 rounded-lg shadow-xl transform translate-y-20 opacity-0 transition-all duration-300 z-50"></div>
+
+    <style>
+        .input-field { width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.5rem 0.75rem; outline: none; transition: border-color 0.2s; }
+        .input-field:focus { border-color: #0d9488; }
+    </style>
+
+    <script>
+        const API_BASE = "http://127.0.0.1:8000/api";
+        let charts = {};
+
+        function showSection(sectionId) {
+            document.querySelectorAll('.sidebar-link').forEach(el => {
+                el.classList.remove('active', 'bg-teal-600', 'text-white');
+                el.classList.add('text-slate-600');
+            });
+            const activeNav = document.getElementById(`nav-${sectionId}`);
+            activeNav.classList.add('active', 'bg-teal-600', 'text-white');
+            activeNav.classList.remove('text-slate-600');
+            document.querySelectorAll('section').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`section-${sectionId}`).classList.remove('hidden');
+        }
+
+        function showToast(msg, type='success') {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.className = `fixed bottom-5 right-5 text-white px-6 py-3 rounded-lg shadow-xl transform transition-all duration-300 z-50 ${type === 'error' ? 'bg-rose-600' : 'bg-slate-800'}`;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+        }
+
+        // --- 1. UPLOAD ---
+        async function handleFileUpload(input) {
+            const file = input.files[0];
+            if(!file) return;
+            const formData = new FormData();
+            formData.append("file", file);
+            showToast("Analyzing batches...", "info");
+
+            try {
+                const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: formData });
+                const data = await res.json();
+
+                if(data.success) {
+                    const stats = data.biotech_insights.batch_summary;
+                    document.getElementById('stat-batches').innerText = stats.total_batches;
+                    document.getElementById('stat-avg-yield').innerText = stats.average_yield;
+                    document.getElementById('stat-golden').innerText = "#" + stats.golden_batch_id;
+                    document.getElementById('stat-worst').innerText = "#" + stats.lowest_yield_batch_id;
+                    
+                    document.getElementById('upload-insights').classList.remove('hidden');
+                    document.getElementById('upload-charts').classList.remove('hidden');
+
+                    renderSpaghettiChart(data.dashboard_graphs.raw_traces);
+                    renderYieldChart(data.dashboard_graphs.yield_distribution);
+                    showToast("Upload Analysis Complete");
+                }
+            } catch(e) { showToast("Upload failed", "error"); console.error(e); }
+        }
+
+        // --- 2. PREPROCESS ---
+        async function runPreprocessing() {
+            showToast("Running pipeline...", "info");
+            try {
+                const res = await fetch(`${API_BASE}/preprocess`, { method: "POST" });
+                const data = await res.json();
+                
+                if(data.success) {
+                    document.getElementById('preprocess-results').classList.remove('hidden');
+                    renderTrajectoryChart(data.visualization_data.golden_batch_trajectory);
+                    
+                    // Render Stats Table
+                    const container = document.getElementById('stats-container');
+                    container.innerHTML = "";
+                    data.stats_deep_dive.sensor_health.forEach(item => {
+                        const isGood = item.status === "Stable";
+                        container.innerHTML += `
+                            <div class="flex items-center justify-between p-3 rounded-lg border ${isGood ? 'border-slate-100 bg-slate-50' : 'border-rose-100 bg-rose-50'}">
+                                <div>
+                                    <div class="font-medium text-sm text-slate-700">${item.parameter}</div>
+                                    <div class="text-xs ${isGood ? 'text-slate-400' : 'text-rose-500'}">Skew: ${item.skewness.toFixed(2)}</div>
+                                </div>
+                                <span class="text-xs px-2 py-1 rounded font-bold ${isGood ? 'bg-green-100 text-green-700' : 'bg-rose-100 text-rose-700'}">${item.status}</span>
+                            </div>
+                        `;
+                    });
+                    showToast("Preprocessing Complete");
+                }
+            } catch(e) { showToast("Error processing data", "error"); }
+        }
+
+        // --- 3. TRAIN ---
+        async function trainModel() {
+            showToast("Training Linear & Random Forest models...", "info");
+            try {
+                const res = await fetch(`${API_BASE}/train`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ test_size: 0.2, n_estimators: 100 })
+                });
+                const data = await res.json();
+
+                if(data.success) {
+                    document.getElementById('train-results').classList.remove('hidden');
+                    
+                    // Metrics
+                    document.getElementById('lr-r2').innerText = data.comparison.linear.r2.toFixed(3);
+                    document.getElementById('lr-rmse').innerText = data.comparison.linear.rmse.toFixed(3);
+                    document.getElementById('rf-r2').innerText = data.comparison.forest.r2.toFixed(3);
+                    document.getElementById('rf-rmse').innerText = data.comparison.forest.rmse.toFixed(3);
+                    
+                    if(data.comparison.winner === "Random Forest") {
+                        document.getElementById('rf-badge').innerText = "Winner";
+                        document.getElementById('rf-badge').classList.replace('bg-emerald-100', 'bg-emerald-600');
+                        document.getElementById('rf-badge').classList.replace('text-emerald-800', 'text-white');
+                    }
+
+                    // Render Actual vs Predicted Chart
+                    renderPredVsActualChart(data.visualization_data.actual_vs_predicted);
+
+                    // Render Features
+                    const list = document.getElementById('feature-list');
+                    list.innerHTML = "";
+                    data.feature_analysis.forEach(f => {
+                        list.innerHTML += `
+                            <div class="mb-3">
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span class="font-medium text-slate-700">${f.parameter}</span>
+                                    <span class="text-slate-400 text-xs">RF Importance: ${(f.forest_importance*100).toFixed(1)}%</span>
+                                </div>
+                                <div class="w-full bg-slate-100 rounded-full h-2">
+                                    <div class="bg-indigo-500 h-2 rounded-full" style="width: ${f.forest_importance*100}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    showToast("Training Complete");
+                }
+            } catch(e) { showToast("Training failed", "error"); console.error(e); }
+        }
+
+        // --- 4. PREDICT ---
+        async function runPrediction() {
+            const params = {
+                sugar_feed: parseFloat(document.getElementById('p-sugar').value),
+                paa: parseFloat(document.getElementById('p-paa').value),
+                agitator_rpm: parseFloat(document.getElementById('p-rpm').value),
+                aeration_rate: parseFloat(document.getElementById('p-aeration').value),
+                model_type: document.getElementById('model-select').value
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/predict`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(params)
+                });
+                const data = await res.json();
+
+                if(data.prediction) {
+                    document.getElementById('prediction-card').classList.remove('hidden');
+                    document.getElementById('radar-container').classList.remove('hidden');
+                    document.getElementById('pred-val').innerText = data.prediction.value;
+                    document.getElementById('model-used-display').innerText = data.prediction.model_used;
+                    renderRadarChart(data.visualization_data.radar_indicators);
+                }
+            } catch(e) { showToast("Prediction failed", "error"); }
+        }
+
+        // --- CHART HELPERS ---
+        function renderSpaghettiChart(traces) {
+    const ctx = document.getElementById('spaghettiChart').getContext('2d');
+    if(charts.spaghetti) charts.spaghetti.destroy();
+    
+    // Create datasets
+    const datasets = traces.map((trace, i) => ({
+        label: `Batch ${trace.batch_id}`,
+        data: trace.yield, 
+        // Style: First batch is thick Teal, others are thin Grey
+        borderColor: i === 0 ? '#0d9488' : '#cbd5e1', 
+        borderWidth: i === 0 ? 3 : 1.5,
+        pointRadius: 0,
+        tension: 0.4,
+        // Make the first one appear on top
+        order: i === 0 ? 0 : 1
+    }));
+
+    charts.spaghetti = new Chart(ctx, {
+        type: 'line',
+        data: { 
+            labels: traces[0].time, // Assumes all batches share similar time steps
+            datasets: datasets 
+        },
+        options: { 
+            responsive: true, 
+            maintainAspectRatio: false, 
+            interaction: {
+                mode: 'nearest',
+                intersect: false,
+            },
+            plugins: { 
+                legend: { display: true, labels: { filter: (item) => item.text.includes('Batch') && !item.text.includes('Batch 1') ? false : true } }, // Only show Legend for main batch to save space
+                tooltip: { enabled: true }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Time (Hours)', font: { weight: 'bold' } },
+                    grid: { display: false }
+                },
+                y: {
+                    title: { display: true, text: 'Yield (g/L)', font: { weight: 'bold' } }
+                }
+            }
+        }
+    });
+}
+
+function renderYieldChart(data) {
+    const ctx = document.getElementById('yieldChart').getContext('2d');
+    if(charts.yield) charts.yield.destroy();
+
+    charts.yield = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.x_values,
+            datasets: [{ 
+                label: 'Frequency', 
+                data: data.y_values, 
+                backgroundColor: '#0f766e', 
+                borderRadius: 4,
+                hoverBackgroundColor: '#115e59'
+            }]
+        },
+        options: { 
+            responsive: true, 
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Penicillin Concentration (g/L)', font: { weight: 'bold' } },
+                    grid: { display: false }
+                },
+                y: {
+                    title: { display: true, text: 'Number of Batches', font: { weight: 'bold' } },
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+        function renderTrajectoryChart(data) {
+            const ctx = document.getElementById('trajectoryChart').getContext('2d');
+            if(charts.traj) charts.traj.destroy();
+            
+            // Find target col dynamic
+            const keys = Object.keys(data[0]);
+            const targetKey = keys.find(k => k.includes('penicillin') || k.includes('yield') || k.includes('concentration'));
+
+            charts.traj = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map(d => d.time),
+                    datasets: [{
+                        label: 'Golden Batch Mean',
+                        data: data.map(d => d[targetKey]),
+                        borderColor: '#4f46e5',
+                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        }
+
+        function renderPredVsActualChart(data) {
+            const ctx = document.getElementById('predVsActualChart').getContext('2d');
+            if(charts.scatter) charts.scatter.destroy();
+
+            // Prepare Scatter Data: {x: Actual, y: Predicted}
+            const rfPoints = data.actual.map((a, i) => ({ x: a, y: data.forest_pred[i] }));
+            const lrPoints = data.actual.map((a, i) => ({ x: a, y: data.linear_pred[i] }));
+            
+            // Reference Line
+            const minVal = Math.min(...data.actual);
+            const maxVal = Math.max(...data.actual);
+
+            charts.scatter = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Random Forest',
+                            data: rfPoints,
+                            backgroundColor: '#10b981', // Emerald
+                            pointRadius: 3
+                        },
+                        {
+                            label: 'Linear Regression',
+                            data: lrPoints,
+                            backgroundColor: '#3b82f6', // Blue
+                            pointRadius: 3
+                        },
+                        {
+                            type: 'line',
+                            label: 'Perfect Fit',
+                            data: [{x: minVal, y: minVal}, {x: maxVal, y: maxVal}],
+                            borderColor: '#94a3b8',
+                            borderDash: [5, 5],
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Actual Yield' } },
+                        y: { title: { display: true, text: 'Predicted Yield' } }
+                    }
+                }
+            });
+        }
+
+        function renderRadarChart(indicators) {
+            const ctx = document.getElementById('radarChart').getContext('2d');
+            if(charts.radar) charts.radar.destroy();
+            charts.radar = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: indicators.map(i => i.parameter),
+                    datasets: [{
+                        label: 'Design Space Percentile',
+                        data: indicators.map(i => i.percentile),
+                        backgroundColor: 'rgba(20, 184, 166, 0.2)',
+                        borderColor: '#0d9488'
+                    }]
+                },
+                options: { scales: { r: { min: 0, max: 100 } }, maintainAspectRatio: false }
+            });
+        }
+    </script>
+</body>
+</html>
